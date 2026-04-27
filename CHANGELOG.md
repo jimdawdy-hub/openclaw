@@ -12,6 +12,7 @@ Docs: https://docs.openclaw.ai
 - Gateway/runtime: reuse the current plugin metadata snapshot for provider discovery so repeated model-provider discovery avoids rebuilding plugin manifest metadata. Thanks @shakkernerd.
 - Gateway/startup: pass the plugin metadata snapshot from config validation into plugin bootstrap so startup reuses one manifest product instead of rebuilding plugin metadata. Thanks @shakkernerd.
 - ACP/runtime: add an opt-in bundled Coven backend extension that routes ACP coding sessions through a local Coven daemon when `acp.backend="coven"`, while preserving the existing ACPX backend as the default fallback path. Thanks @BunsDev.
+- Plugin hooks: add HITL lifecycle approval gates for `before_agent_run` and assistant message-end output while reusing the existing plugin approval flow. (#71411) Thanks @jesse-merhi.
 
 ### Fixes
 
