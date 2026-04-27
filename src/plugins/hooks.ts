@@ -2,12 +2,19 @@
  * Plugin Hook Runner
  *
  * Provides utilities for executing plugin lifecycle hooks with proper
- * error handling, priority ordering, and async support.
+ * error handling and priority ordering.
  */
 
 import { formatHookErrorForLog } from "../hooks/fire-and-forget.js";
 import { formatErrorMessage } from "../infra/errors.js";
 import { concatOptionalTextSegments } from "../shared/text/join-segments.js";
+import {
+  type HookDecision,
+  type GateHookResult,
+  type MessageEndGateDecision,
+  isHookDecision,
+  mergeHookDecisions,
+} from "./hook-decision-types.js";
 import type { GlobalHookRunnerRegistry, HookRunnerRegistry } from "./hook-registry.types.js";
 import type {
   PluginHookAfterCompactionEvent,
@@ -37,10 +44,12 @@ import type {
   PluginHookInboundClaimEvent,
   PluginHookInboundClaimResult,
   PluginHookLlmInputEvent,
+  PluginHookLlmMessageEndEvent,
   PluginHookLlmOutputEvent,
   PluginHookBeforeResetEvent,
   PluginHookBeforeToolCallEvent,
   PluginHookBeforeToolCallResult,
+  PluginHookBeforeAgentRunEvent,
   PluginHookGatewayContext,
   PluginHookGatewayStartEvent,
   PluginHookGatewayStopEvent,
@@ -110,6 +119,7 @@ export type {
   PluginHookToolContext,
   PluginHookBeforeToolCallEvent,
   PluginHookBeforeToolCallResult,
+  PluginHookBeforeAgentRunEvent,
   PluginHookAfterToolCallEvent,
   PluginHookToolResultPersistContext,
   PluginHookToolResultPersistEvent,
@@ -679,6 +689,41 @@ export function createHookRunner(
   }
 
   /**
+   * Run llm_message_end hook.
+   * Allows plugins to gate assistant messages at Pi message-end boundaries.
+   */
+  async function runLlmMessageEnd(
+    event: PluginHookLlmMessageEndEvent,
+    ctx: PluginHookAgentContext,
+  ): Promise<GateHookResult | undefined> {
+    let winningPluginId: string | undefined;
+    const decision = await runModifyingHook<"llm_message_end", HookDecision | undefined>(
+      "llm_message_end",
+      event,
+      ctx,
+      {
+        mergeResults: (_acc, next, reg): HookDecision | undefined => {
+          if (!isHookDecision(next)) {
+            return _acc;
+          }
+          const merged = mergeHookDecisions(_acc, next);
+          if (merged === next) {
+            winningPluginId = reg.pluginId;
+          }
+          return merged;
+        },
+        // Keep running past pass/ask so later handlers can still block.
+        shouldStop: (result) => result?.outcome === "block",
+        terminalLabel: "gate-decision",
+      },
+    );
+    if (!decision) {
+      return undefined;
+    }
+    return { decision: decision as MessageEndGateDecision, pluginId: winningPluginId ?? "unknown" };
+  }
+
+  /**
    * Run before_agent_finalize hook.
    * Allows plugins to request one more model pass before a natural final reply
    * is accepted. This is not the user-facing /stop cancellation path.
@@ -855,7 +900,43 @@ export function createHookRunner(
     return runVoidHook("message_sent", event, ctx);
   }
 
-  // =========================================================================
+  /**
+   * Run before_agent_run gate hook.
+   * Fires after session resolution and workspace preparation, before model inference.
+   * Returns the most-restrictive HookDecision from all handlers.
+   * Handlers that return void are treated as pass.
+   */
+  async function runBeforeAgentRun(
+    event: PluginHookBeforeAgentRunEvent,
+    ctx: PluginHookAgentContext,
+  ): Promise<GateHookResult | undefined> {
+    let winningPluginId: string | undefined;
+    const decision = await runModifyingHook<"before_agent_run", HookDecision | undefined>(
+      "before_agent_run",
+      event,
+      ctx,
+      {
+        mergeResults: (_acc, next, reg) => {
+          if (!isHookDecision(next)) {
+            return _acc;
+          }
+          const merged = mergeHookDecisions(_acc, next);
+          if (merged === next) {
+            winningPluginId = reg.pluginId;
+          }
+          return merged;
+        },
+        // ask does NOT short-circuit — keep running so other plugins can escalate to block
+        shouldStop: (result) => result?.outcome === "block",
+        terminalLabel: "gate-decision",
+      },
+    );
+    if (!decision) {
+      return undefined;
+    }
+    return { decision, pluginId: winningPluginId ?? "unknown" };
+  }
+
   // Tool Hooks
   // =========================================================================
 
@@ -1181,9 +1262,6 @@ export function createHookRunner(
   // Utility
   // =========================================================================
 
-  /**
-   * Check if any hooks are registered for a given hook name.
-   */
   function hasHooks(hookName: PluginHookName): boolean {
     return registry.typedHooks.some((h) => h.hookName === hookName);
   }
@@ -1205,11 +1283,14 @@ export function createHookRunner(
     runModelCallEnded,
     runLlmInput,
     runLlmOutput,
+    runLlmMessageEnd,
     runBeforeAgentFinalize,
     runAgentEnd,
     runBeforeCompaction,
     runAfterCompaction,
     runBeforeReset,
+    // Lifecycle gate hooks
+    runBeforeAgentRun,
     // Message hooks
     runInboundClaim,
     runInboundClaimForPlugin,
