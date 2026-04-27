@@ -63,6 +63,12 @@ export type ChatProps = {
   streamSegments: Array<{ text: string; ts: number }>;
   stream: string | null;
   streamStartedAt: number | null;
+  /** Live retry notice surfaced while a message-end hook retry is pending. */
+  retryNotice?: {
+    retryCount: number;
+    maxRetries: number;
+    reason: string;
+  } | null;
   assistantAvatarUrl?: string | null;
   draft: string;
   queue: ChatQueueItem[];
@@ -843,6 +849,7 @@ export function renderChat(props: ChatProps) {
                 assistantIdentity,
                 props.basePath,
                 props.assistantAttachmentAuthToken ?? null,
+                props.retryNotice ?? null,
               );
             }
             if (item.kind === "stream") {
@@ -853,6 +860,7 @@ export function renderChat(props: ChatProps) {
                 assistantIdentity,
                 props.basePath,
                 props.assistantAttachmentAuthToken ?? null,
+                props.retryNotice ?? null,
               );
             }
             if (item.kind === "group") {

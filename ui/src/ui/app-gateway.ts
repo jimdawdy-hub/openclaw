@@ -626,7 +626,7 @@ function handleChatGatewayEvent(host: GatewayHost, payload: ChatEventPayload | u
     deferredReloadHost.pendingSessionMessageReloadSessionKey = null;
   }
   if (
-    state === "final" &&
+    isTerminalChatState(state) &&
     !historyReloaded &&
     !terminalEventIsForDifferentActiveRun &&
     shouldReloadHistoryForFinalEvent(payload)

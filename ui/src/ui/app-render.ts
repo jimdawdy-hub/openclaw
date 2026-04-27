@@ -2313,6 +2313,7 @@ export function renderApp(state: AppViewState) {
               streamSegments: state.chatStreamSegments,
               stream: state.chatStream,
               streamStartedAt: state.chatStreamStartedAt,
+              retryNotice: state.chatRetryNotice,
               draft: state.chatMessage,
               queue: state.chatQueue,
               realtimeTalkActive: state.realtimeTalkActive,
