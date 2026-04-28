@@ -73,6 +73,8 @@ export async function probeGatewayStatus(opts: {
           gatewayMode: "local",
           gatewayUrl: opts.url,
           gatewayProbe: initialProbe,
+          hasSharedCredentials: Boolean(opts.token || opts.password),
+          tlsFingerprint: opts.tlsFingerprint,
           callStatus: async () => {
             const { callGateway } = await import("../../gateway/call.js");
             return await callGateway({
