@@ -28,18 +28,11 @@ function buildTempDownloadPath(fileName: string): string {
 }
 
 function createPageDownloadWaiter(page: Page, timeoutMs: number) {
-  const state = ensurePageState(page);
-  state.downloadWaiterDepth += 1;
   let done = false;
   let timer: NodeJS.Timeout | undefined;
   let handler: ((download: unknown) => void) | undefined;
-  let depthReleased = false;
 
   const cleanup = () => {
-    if (!depthReleased) {
-      depthReleased = true;
-      state.downloadWaiterDepth = Math.max(0, state.downloadWaiterDepth - 1);
-    }
     if (timer) {
       clearTimeout(timer);
     }
@@ -89,7 +82,11 @@ type DownloadPayload = {
   saveAs?: (outPath: string) => Promise<void>;
 };
 
-async function saveDownloadPayload(download: DownloadPayload, outPath: string) {
+async function saveDownloadPayload(
+  download: DownloadPayload,
+  outPath: string,
+  downloadsRoot?: string,
+) {
   const suggested = download.suggestedFilename?.() || "download.bin";
   const requestedPath = outPath?.trim();
   const resolvedOutPath = path.resolve(requestedPath || buildTempDownloadPath(suggested));
@@ -99,7 +96,7 @@ async function saveDownloadPayload(download: DownloadPayload, outPath: string) {
     await download.saveAs?.(resolvedOutPath);
   } else {
     await writeViaSiblingTempPath({
-      rootDir: path.dirname(resolvedOutPath),
+      rootDir: downloadsRoot ? path.resolve(downloadsRoot) : path.dirname(resolvedOutPath),
       targetPath: resolvedOutPath,
       writeTemp: async (tempPath) => {
         await download.saveAs?.(tempPath);
@@ -119,13 +116,14 @@ async function awaitDownloadPayload(params: {
   state: ReturnType<typeof ensurePageState>;
   armId: number;
   outPath?: string;
+  downloadsRoot?: string;
 }) {
   try {
     const download = (await params.waiter.promise) as DownloadPayload;
     if (params.state.armIdDownload !== params.armId) {
       throw new Error("Download was superseded by another waiter");
     }
-    return await saveDownloadPayload(download, params.outPath ?? "");
+    return await saveDownloadPayload(download, params.outPath || "", params.downloadsRoot);
   } catch (err) {
     params.waiter.cancel();
     throw err;
@@ -229,6 +227,7 @@ export async function waitForDownloadViaPlaywright(opts: {
   cdpUrl: string;
   targetId?: string;
   path?: string;
+  downloadsRoot?: string;
   timeoutMs?: number;
 }): Promise<{
   url: string;
@@ -243,7 +242,13 @@ export async function waitForDownloadViaPlaywright(opts: {
   const armId = state.armIdDownload;
 
   const waiter = createPageDownloadWaiter(page, timeout);
-  return await awaitDownloadPayload({ waiter, state, armId, outPath: opts.path });
+  return await awaitDownloadPayload({
+    waiter,
+    state,
+    armId,
+    outPath: opts.path,
+    downloadsRoot: opts.downloadsRoot,
+  });
 }
 
 export async function downloadViaPlaywright(opts: {
@@ -251,6 +256,7 @@ export async function downloadViaPlaywright(opts: {
   targetId?: string;
   ref: string;
   path: string;
+  downloadsRoot?: string;
   timeoutMs?: number;
 }): Promise<{
   url: string;
@@ -279,7 +285,13 @@ export async function downloadViaPlaywright(opts: {
     } catch (err) {
       throw toAIFriendlyError(err, ref);
     }
-    return await awaitDownloadPayload({ waiter, state, armId, outPath });
+    return await awaitDownloadPayload({
+      waiter,
+      state,
+      armId,
+      outPath,
+      downloadsRoot: opts.downloadsRoot,
+    });
   } catch (err) {
     waiter.cancel();
     throw err;

@@ -102,28 +102,21 @@ describe("pw-tools-core", () => {
   }
 
   function createDownloadEventHarness() {
-    const downloadHandlers = new Set<(download: unknown) => void>();
+    let downloadHandler: ((download: unknown) => void) | undefined;
     const on = vi.fn((event: string, handler: (download: unknown) => void) => {
       if (event === "download") {
-        downloadHandlers.add(handler);
+        downloadHandler = handler;
       }
     });
-    const off = vi.fn((event: string, handler: (download: unknown) => void) => {
-      if (event === "download") {
-        downloadHandlers.delete(handler);
-      }
-    });
+    const off = vi.fn();
     setPwToolsCoreCurrentPage({ on, off });
     return {
       trigger: (download: unknown) => {
-        for (const handler of downloadHandlers) {
-          handler(download);
-        }
+        downloadHandler?.(download);
       },
       expectArmed: () => {
-        expect(downloadHandlers.size).toBeGreaterThan(0);
+        expect(downloadHandler).toBeDefined();
       },
-      activeHandlerCount: () => downloadHandlers.size,
     };
   }
 
@@ -176,31 +169,6 @@ describe("pw-tools-core", () => {
       await expect(fs.realpath(res.path)).resolves.toBe(await fs.realpath(targetPath));
     });
   });
-
-  it("marks explicit download waiters as owning the next download until cleanup", async () => {
-    const harness = createDownloadEventHarness();
-    const state = sessionMocks.ensurePageState();
-    expect(state.downloadWaiterDepth).toBe(0);
-
-    const p = mod.waitForDownloadViaPlaywright({
-      cdpUrl: "http://127.0.0.1:18792",
-      targetId: "T1",
-      timeoutMs: 1000,
-    });
-
-    await Promise.resolve();
-    harness.expectArmed();
-    expect(state.downloadWaiterDepth).toBe(1);
-    harness.trigger({
-      url: () => "https://example.com/file.bin",
-      suggestedFilename: () => "file.bin",
-      saveAs: vi.fn(async () => {}),
-    });
-
-    await p;
-    expect(state.downloadWaiterDepth).toBe(0);
-    expect(harness.activeHandlerCount()).toBe(0);
-  });
   it("clicks a ref and atomically finalizes explicit download paths", async () => {
     await withTempDir(async (tempDir) => {
       const harness = createDownloadEventHarness();
@@ -235,6 +203,41 @@ describe("pw-tools-core", () => {
       const res = await p;
       await expectAtomicDownloadSave({ saveAs, targetPath, tempDir, content: "report-content" });
       await expect(fs.realpath(res.path)).resolves.toBe(await fs.realpath(targetPath));
+    });
+  });
+
+  it("rejects explicit download paths outside the declared downloads root", async () => {
+    await withTempDir(async (tempDir) => {
+      const downloadsRoot = path.join(tempDir, "downloads");
+      const outsidePath = path.join(tempDir, "outside", "report.pdf");
+      await fs.mkdir(downloadsRoot, { recursive: true });
+
+      const harness = createDownloadEventHarness();
+      const click = vi.fn(async () => {});
+      setPwToolsCoreCurrentRefLocator({ click });
+      const saveAs = vi.fn(async (outPath: string) => {
+        await fs.mkdir(path.dirname(outPath), { recursive: true });
+        await fs.writeFile(outPath, "outside-content", "utf8");
+      });
+      const p = mod.downloadViaPlaywright({
+        cdpUrl: "http://127.0.0.1:18792",
+        targetId: "T1",
+        ref: "e12",
+        path: outsidePath,
+        downloadsRoot,
+        timeoutMs: 1000,
+      });
+
+      await Promise.resolve();
+      harness.expectArmed();
+      harness.trigger({
+        url: () => "https://example.com/report.pdf",
+        suggestedFilename: () => "report.pdf",
+        saveAs,
+      });
+
+      await expect(p).rejects.toThrow(/downloads directory|allowed root|outside/i);
+      await expect(fs.stat(outsidePath)).rejects.toMatchObject({ code: "ENOENT" });
     });
   });
 
