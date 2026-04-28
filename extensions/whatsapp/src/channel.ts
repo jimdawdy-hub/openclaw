@@ -29,6 +29,7 @@ import { resolveWhatsAppHeartbeatRecipients } from "./heartbeat-recipients.js";
 import { checkWhatsAppHeartbeatReady } from "./heartbeat.js";
 import {
   isWhatsAppGroupJid,
+  isWhatsAppNewsletterJid,
   looksLikeWhatsAppTargetId,
   normalizeWhatsAppMessagingTarget,
   normalizeWhatsAppTarget,
@@ -57,7 +58,11 @@ function parseWhatsAppExplicitTarget(raw: string) {
   }
   return {
     to: normalized,
-    chatType: isWhatsAppGroupJid(normalized) ? ("group" as const) : ("direct" as const),
+    chatType: isWhatsAppGroupJid(normalized)
+      ? ("group" as const)
+      : isWhatsAppNewsletterJid(normalized)
+        ? ("channel" as const)
+        : ("direct" as const),
   };
 }
 
@@ -117,7 +122,7 @@ export const whatsappPlugin: ChannelPlugin<ResolvedWhatsAppAccount> =
         inferTargetChatType: ({ to }) => parseWhatsAppExplicitTarget(to)?.chatType,
         targetResolver: {
           looksLikeId: looksLikeWhatsAppTargetId,
-          hint: "<E.164|group JID>",
+          hint: "<E.164|group JID|newsletter JID>",
         },
       },
       directory: {
