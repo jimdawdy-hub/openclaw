@@ -245,6 +245,27 @@ type CleanupLogger = {
 /** Default field types created for new Bitable tables (to be cleaned up) */
 const DEFAULT_CLEANUP_FIELD_TYPES = new Set([3, 5, 17]); // SingleSelect, DateTime, Attachment
 
+function isDefaultEmptyBitableFieldValue(value: unknown): boolean {
+  if (value === undefined || value === null || value === "") {
+    return true;
+  }
+  if (Array.isArray(value)) {
+    return value.length === 0;
+  }
+  if (typeof value === "object") {
+    return Object.keys(value).length === 0;
+  }
+  return false;
+}
+
+function isPlaceholderBitableRecord(fields: unknown): boolean {
+  if (!fields || typeof fields !== "object" || Array.isArray(fields)) {
+    return true;
+  }
+  const values = Object.values(fields);
+  return values.every(isDefaultEmptyBitableFieldValue);
+}
+
 /** Clean up default placeholder rows and fields in a newly created Bitable table */
 async function cleanupNewBitable(
   client: Lark.Client,
@@ -315,7 +336,7 @@ async function cleanupNewBitable(
 
   if (recordsRes.code === 0 && recordsRes.data?.items) {
     const emptyRecordIds = recordsRes.data.items
-      .filter((r) => !r.fields || Object.keys(r.fields).length === 0)
+      .filter((r) => isPlaceholderBitableRecord(r.fields))
       .map((r) => r.record_id)
       .filter((id): id is string => Boolean(id));
 
