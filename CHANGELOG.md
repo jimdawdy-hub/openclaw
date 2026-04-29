@@ -13,6 +13,7 @@ Docs: https://docs.openclaw.ai
 
 ### Fixes
 
+- Channels/Feishu: retry file-typed iOS video resource downloads as `media` after a Feishu/Lark HTTP 502 and preserve the original 502 when the fallback also fails. Fixes #49855; carries forward #50164 and the closed replacement #73937. Thanks @alex-xuweilong.
 - Gateway/shutdown: report structured shutdown warnings and HTTP close timeout warnings through `ShutdownResult` while preserving lifecycle hook hardening. Carries forward #41296. Thanks @edenfunf.
 - Plugins/QA: prebuild the private QA channel runtime before plugin gauntlet source runs so wrapper CPU/RSS measurements are not polluted by private QA dist rebuild work. Thanks @vincentkoc.
 - Gateway/reload: bound default restart deferral and SIGUSR1 restart drain to five minutes while preserving explicit `deferralTimeoutMs: 0` indefinite waits, so stale active work accounting cannot block config reloads forever. Thanks @vincentkoc.
