@@ -1,4 +1,4 @@
-import type { ChannelId } from "../channels/plugins/types.public.js";
+import type { ChannelAccountSnapshot, ChannelId } from "../channels/plugins/types.public.js";
 
 export type ChannelHealthSnapshot = {
   running?: boolean;
@@ -11,6 +11,7 @@ export type ChannelHealthSnapshot = {
   lastRunActivityAt?: number | null;
   lastEventAt?: number | null;
   lastTransportActivityAt?: number | null;
+  lastDisconnectAt?: number | null;
   lastStartAt?: number | null;
   reconnectAttempts?: number;
   mode?: string;
@@ -23,6 +24,7 @@ export type ChannelHealthEvaluationReason =
   | "busy"
   | "stuck"
   | "startup-connect-grace"
+  | "reconnect-grace"
   | "disconnected"
   | "stale-socket";
 
@@ -36,6 +38,7 @@ export type ChannelHealthPolicy = {
   now: number;
   staleEventThresholdMs: number;
   channelConnectGraceMs: number;
+  reconnectGraceMs: number;
 };
 
 export type ChannelRestartReason =
@@ -54,6 +57,25 @@ const BUSY_ACTIVITY_STALE_THRESHOLD_MS = 25 * 60_000;
 // probes so both surfaces evaluate channel lifecycle windows consistently.
 export const DEFAULT_CHANNEL_STALE_EVENT_THRESHOLD_MS = 30 * 60_000;
 export const DEFAULT_CHANNEL_CONNECT_GRACE_MS = 120_000;
+export const DEFAULT_CHANNEL_RECONNECT_GRACE_MS = 120_000;
+
+export function resolveChannelLastDisconnectAt(
+  lastDisconnect: ChannelAccountSnapshot["lastDisconnect"] | undefined,
+): number | null {
+  if (!lastDisconnect || typeof lastDisconnect === "string") {
+    return null;
+  }
+  return Number.isFinite(lastDisconnect.at) ? lastDisconnect.at : null;
+}
+
+export function createChannelHealthSnapshot(
+  snapshot: ChannelAccountSnapshot,
+): ChannelHealthSnapshot {
+  return {
+    ...snapshot,
+    lastDisconnectAt: resolveChannelLastDisconnectAt(snapshot.lastDisconnect),
+  };
+}
 
 export function evaluateChannelHealth(
   snapshot: ChannelHealthSnapshot,
@@ -83,6 +105,11 @@ export function evaluateChannelHealth(
     Number.isFinite(snapshot.lastTransportActivityAt)
       ? snapshot.lastTransportActivityAt
       : null;
+  const lastDisconnectAt =
+    typeof snapshot.lastDisconnectAt === "number" && Number.isFinite(snapshot.lastDisconnectAt)
+      ? snapshot.lastDisconnectAt
+      : null;
+  const reconnectGraceMs = Math.max(0, policy.reconnectGraceMs);
   const busyStateInitializedForLifecycle =
     lastStartAt == null || (lastRunActivityAt != null && lastRunActivityAt >= lastStartAt);
 
@@ -103,13 +130,22 @@ export function evaluateChannelHealth(
       return { healthy: false, reason: "stuck" };
     }
   }
-  if (snapshot.lastStartAt != null) {
-    const upDuration = policy.now - snapshot.lastStartAt;
+  if (lastStartAt != null) {
+    const upDuration = policy.now - lastStartAt;
     if (upDuration < policy.channelConnectGraceMs) {
       return { healthy: true, reason: "startup-connect-grace" };
     }
   }
   if (snapshot.connected === false) {
+    const disconnectBelongsToLifecycle =
+      lastDisconnectAt != null && (lastStartAt == null || lastDisconnectAt >= lastStartAt);
+    const disconnectAge =
+      lastDisconnectAt == null
+        ? Number.POSITIVE_INFINITY
+        : Math.max(0, policy.now - lastDisconnectAt);
+    if (disconnectBelongsToLifecycle && disconnectAge < reconnectGraceMs) {
+      return { healthy: true, reason: "reconnect-grace" };
+    }
     return { healthy: false, reason: "disconnected" };
   }
   // App-level events are not socket liveness: quiet Slack/Discord workspaces can
