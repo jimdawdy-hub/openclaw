@@ -114,8 +114,6 @@ jobs:
         with:
           context: .
           file: ./Dockerfile
-          cache-from: type=gha,scope=openclaw-dockerfile-smoke
-          cache-to: type=gha,scope=openclaw-dockerfile-smoke,mode=max
           build-args: |
             OPENCLAW_EXTENSIONS=matrix
           tags: |
@@ -230,8 +228,6 @@ jobs:
         with:
           context: .
           file: ./Dockerfile
-          cache-from: type=gha,scope=openclaw-dockerfile-smoke
-          cache-to: type=gha,scope=openclaw-dockerfile-smoke,mode=max
           build-args: |
             OPENCLAW_EXTENSIONS=matrix
           tags: |
