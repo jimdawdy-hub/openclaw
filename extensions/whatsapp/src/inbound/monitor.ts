@@ -39,6 +39,12 @@ import {
 } from "./extract.js";
 import { attachEmitterListener, closeInboundMonitorSocket } from "./lifecycle.js";
 import { downloadInboundMedia } from "./media.js";
+import {
+  addWhatsAppOutboundMentionsToContent,
+  mayContainWhatsAppOutboundMention,
+  resolveWhatsAppOutboundMentions,
+  type WhatsAppOutboundMentionParticipant,
+} from "./outbound-mentions.js";
 import { DisconnectReason, isJidGroup, saveMediaBuffer } from "./runtime-api.js";
 import { createWebSendApi } from "./send-api.js";
 import type { WebInboundMessage, WebListenerCloseReason } from "./types.js";
@@ -234,10 +240,13 @@ export async function attachWebInboxToSocket(
       inboundConsoleLog.error(`Failed handling inbound web message: ${String(err)}`);
     },
   });
-  const groupMetaCache = new Map<
-    string,
-    { subject?: string; participants?: string[]; expires: number }
-  >();
+  type CachedGroupMeta = {
+    subject?: string;
+    participants?: string[];
+    mentionParticipants?: WhatsAppOutboundMentionParticipant[];
+    expires: number;
+  };
+  const groupMetaCache = new Map<string, CachedGroupMeta>();
   const GROUP_META_TTL_MS = 5 * 60 * 1000; // 5 minutes
   const lidLookup = sock.signalRepository?.lidMapping;
 
@@ -312,19 +321,27 @@ export async function attachWebInboxToSocket(
       return cached;
     }
     try {
-      const meta = await sock.groupMetadata(jid);
-      const participants =
-        (
-          await Promise.all(
-            meta.participants?.map(async (p) => {
-              const mapped = await resolveInboundJid(p.id);
-              return mapped ?? p.id;
-            }) ?? [],
-          )
-        ).filter(Boolean) ?? [];
+      const meta = await (getCurrentSock() ?? sock).groupMetadata(jid);
+      const participantEntries = await Promise.all(
+        meta.participants?.map(async (p) => {
+          const mapped = await resolveInboundJid(p.id);
+          return {
+            display: mapped ?? p.id,
+            mention: {
+              id: p.id,
+              lid: p.lid,
+              phoneNumber: p.phoneNumber,
+              e164: mapped,
+            } satisfies WhatsAppOutboundMentionParticipant,
+          };
+        }) ?? [],
+      );
+      const participants = participantEntries.map((entry) => entry.display).filter(Boolean) ?? [];
+      const mentionParticipants = participantEntries.map((entry) => entry.mention);
       const entry = {
         subject: meta.subject,
         participants,
+        mentionParticipants,
         expires: Date.now() + GROUP_META_TTL_MS,
       };
       groupMetaCache.set(jid, entry);
@@ -336,6 +353,43 @@ export async function attachWebInboxToSocket(
       );
       return { expires: Date.now() + GROUP_META_TTL_MS };
     }
+  };
+
+  const resolveOutboundMentionsForGroup = async (
+    jid: string,
+    text: string,
+  ): Promise<{ text: string; mentionedJids: string[] }> => {
+    if (!isGroupJid(jid) || !mayContainWhatsAppOutboundMention(text)) {
+      return { text, mentionedJids: [] };
+    }
+    const meta = await getGroupMeta(jid);
+    return resolveWhatsAppOutboundMentions({
+      chatJid: jid,
+      text,
+      participants: meta.mentionParticipants,
+    });
+  };
+
+  const applyOutboundMentionsToContent = async (
+    jid: string,
+    content: AnyMessageContent,
+  ): Promise<AnyMessageContent> => {
+    if ("text" in content && typeof content.text === "string") {
+      const resolved = await resolveOutboundMentionsForGroup(jid, content.text);
+      return addWhatsAppOutboundMentionsToContent(
+        { ...content, text: resolved.text } as AnyMessageContent,
+        resolved.mentionedJids,
+      );
+    }
+    const caption = (content as { caption?: unknown }).caption;
+    if (typeof caption === "string") {
+      const resolved = await resolveOutboundMentionsForGroup(jid, caption);
+      return addWhatsAppOutboundMentionsToContent(
+        { ...content, caption: resolved.text } as AnyMessageContent,
+        resolved.mentionedJids,
+      );
+    }
+    return content;
   };
 
   type NormalizedInboundMessage = {
@@ -551,13 +605,22 @@ export async function attachWebInboxToSocket(
       }
     };
     const reply = async (text: string, options?: MiscMessageGenerationOptions) => {
-      await sendTrackedMessage(chatJid, { text }, options);
+      const resolved = await resolveOutboundMentionsForGroup(chatJid, text);
+      await sendTrackedMessage(
+        chatJid,
+        addWhatsAppOutboundMentionsToContent({ text: resolved.text }, resolved.mentionedJids),
+        options,
+      );
     };
     const sendMedia = async (
       payload: AnyMessageContent,
       options?: MiscMessageGenerationOptions,
     ) => {
-      await sendTrackedMessage(chatJid, payload, options);
+      await sendTrackedMessage(
+        chatJid,
+        await applyOutboundMentionsToContent(chatJid, payload),
+        options,
+      );
     };
     const timestamp = inbound.messageTimestampMs;
     const mentionedJids = extractMentionedJids(msg.message as proto.IMessage | undefined);
@@ -764,6 +827,7 @@ export async function attachWebInboxToSocket(
       },
     },
     defaultAccountId: options.accountId,
+    resolveOutboundMentions: ({ jid, text }) => resolveOutboundMentionsForGroup(jid, text),
   });
 
   return {
