@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import os from "node:os";
+import path from "node:path";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { getShellEnvAppliedKeys } from "../infra/shell-env.js";
 import { resolvePluginSetupProvider } from "../plugins/setup-registry.js";
@@ -31,8 +32,21 @@ function expandAuthEvidencePath(rawPath: string, env: NodeJS.ProcessEnv): string
   if (!trimmed) {
     return undefined;
   }
-  const homeDir = normalizeOptionalSecretInput(env.HOME) ?? os.homedir();
-  return trimmed.replaceAll("${HOME}", homeDir);
+  const homeDir =
+    normalizeOptionalSecretInput(env.HOME) ??
+    normalizeOptionalSecretInput(env.USERPROFILE) ??
+    os.homedir();
+  const appDataDir =
+    normalizeOptionalSecretInput(env.APPDATA) ?? path.join(homeDir, "AppData", "Roaming");
+  const replacements: Record<string, string> = {
+    "${HOME}": homeDir,
+    "${USERPROFILE}": normalizeOptionalSecretInput(env.USERPROFILE) ?? homeDir,
+    "${APPDATA}": appDataDir,
+  };
+  return Object.entries(replacements).reduce(
+    (expanded, [placeholder, value]) => expanded.replaceAll(placeholder, value),
+    trimmed,
+  );
 }
 
 function hasRequiredAuthEvidenceEnv(

@@ -129,8 +129,12 @@ vi.mock("./model-auth-env-vars.js", () => {
           {
             type: "local-file-with-env",
             fileEnvVar: "GOOGLE_APPLICATION_CREDENTIALS",
-            fallbackPaths: ["${HOME}/.config/gcloud/application_default_credentials.json"],
-            requiresAnyEnv: ["GOOGLE_CLOUD_PROJECT", "GCLOUD_PROJECT"],
+            fallbackPaths: [
+              "${HOME}/.config/gcloud/application_default_credentials.json",
+              "${APPDATA}/gcloud/application_default_credentials.json",
+              "${USERPROFILE}/AppData/Roaming/gcloud/application_default_credentials.json",
+            ],
+            requiresAnyEnv: ["GOOGLE_CLOUD_PROJECT", "GCLOUD_PROJECT", "GOOGLE_CLOUD_PROJECT_ID"],
             requiresAllEnv: ["GOOGLE_CLOUD_LOCATION"],
             credentialMarker: "gcp-vertex-credentials",
             source: "gcloud adc",
@@ -957,6 +961,42 @@ describe("getApiKeyForModel", () => {
         GOOGLE_CLOUD_PROJECT: "vertex-project",
       },
     });
+  });
+
+  it("resolveEnvApiKey('google-vertex') accepts GOOGLE_CLOUD_PROJECT_ID for ADC auth evidence", async () => {
+    await expectVertexAdcEnvApiKey({
+      provider: "google-vertex",
+      credentialsJson: "{}",
+      tempPrefix: "openclaw-google-adc-project-id-",
+      env: {
+        GOOGLE_CLOUD_LOCATION: "us-central1",
+        GOOGLE_CLOUD_PROJECT_ID: "vertex-project",
+      },
+    });
+  });
+
+  it("resolveEnvApiKey('google-vertex') accepts Windows APPDATA ADC fallback evidence", async () => {
+    const appDataDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-google-adc-appdata-"));
+    const fallbackDir = path.join(appDataDir, "gcloud");
+    await fs.mkdir(fallbackDir, { recursive: true });
+    await fs.writeFile(
+      path.join(fallbackDir, "application_default_credentials.json"),
+      "{}",
+      "utf8",
+    );
+
+    try {
+      const resolved = resolveEnvApiKey("google-vertex", {
+        APPDATA: appDataDir,
+        GOOGLE_CLOUD_LOCATION: "us-central1",
+        GOOGLE_CLOUD_PROJECT: "vertex-project",
+      } as NodeJS.ProcessEnv);
+
+      expect(resolved?.apiKey).toBe("gcp-vertex-credentials");
+      expect(resolved?.source).toBe("gcloud adc");
+    } finally {
+      await fs.rm(appDataDir, { recursive: true, force: true });
+    }
   });
 
   it("resolveEnvApiKey('google-vertex') keeps ADC fallback when manifest env candidates are empty", async () => {

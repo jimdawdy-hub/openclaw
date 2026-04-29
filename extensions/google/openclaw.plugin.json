@@ -81,8 +81,12 @@
           {
             "type": "local-file-with-env",
             "fileEnvVar": "GOOGLE_APPLICATION_CREDENTIALS",
-            "fallbackPaths": ["${HOME}/.config/gcloud/application_default_credentials.json"],
-            "requiresAnyEnv": ["GOOGLE_CLOUD_PROJECT", "GCLOUD_PROJECT"],
+            "fallbackPaths": [
+              "${HOME}/.config/gcloud/application_default_credentials.json",
+              "${APPDATA}/gcloud/application_default_credentials.json",
+              "${USERPROFILE}/AppData/Roaming/gcloud/application_default_credentials.json"
+            ],
+            "requiresAnyEnv": ["GOOGLE_CLOUD_PROJECT", "GCLOUD_PROJECT", "GOOGLE_CLOUD_PROJECT_ID"],
             "requiresAllEnv": ["GOOGLE_CLOUD_LOCATION"],
             "credentialMarker": "gcp-vertex-credentials",
             "source": "gcloud adc"
