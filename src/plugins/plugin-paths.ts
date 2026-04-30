@@ -8,7 +8,11 @@ import { resolveUserPath } from "../utils.js";
  */
 export function resolvePluginPath(input: string, rootDir: string | undefined): string {
   const trimmed = input?.trim() ?? "";
-  if (!trimmed) return resolveUserPath(input);
-  if (path.isAbsolute(trimmed) || trimmed.startsWith("~")) return resolveUserPath(input);
+  if (!trimmed) {
+    return resolveUserPath(input);
+  }
+  if (path.isAbsolute(trimmed) || trimmed.startsWith("~")) {
+    return resolveUserPath(input);
+  }
   return rootDir ? path.resolve(rootDir, trimmed) : resolveUserPath(input);
 }
