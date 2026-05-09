@@ -231,6 +231,54 @@ describe("buildChatItems", () => {
     });
   });
 
+  it("shows a server-truncation notice when the history fits the render window but the server reports older messages exist", () => {
+    const items = buildChatItems(
+      createProps({
+        messages: Array.from({ length: 100 }, (_, index) => ({
+          role: index % 2 === 0 ? "user" : "assistant",
+          content: `message ${index}`,
+          timestamp: index,
+        })),
+        serverHistoryTruncated: true,
+      }),
+    );
+
+    expect(items[0]).toMatchObject({
+      kind: "group",
+      messages: [
+        expect.objectContaining({
+          message: expect.objectContaining({
+            role: "system",
+            content:
+              "Showing last 100 messages. Older messages exist; view this session in TUI for full history.",
+          }),
+        }),
+      ],
+    });
+
+    const groups = items.filter((item) => item.kind === "group");
+    expect(groups).toHaveLength(101);
+    expect(groups[1].messages[0].message).toMatchObject({ content: "message 0" });
+    expect(groups.at(-1)?.messages[0].message).toMatchObject({ content: "message 99" });
+  });
+
+  it("does not show the server-truncation notice when serverHistoryTruncated is false", () => {
+    const items = buildChatItems(
+      createProps({
+        messages: Array.from({ length: 100 }, (_, index) => ({
+          role: index % 2 === 0 ? "user" : "assistant",
+          content: `message ${index}`,
+          timestamp: index,
+        })),
+        serverHistoryTruncated: false,
+      }),
+    );
+
+    const groups = items.filter((item) => item.kind === "group");
+    expect(groups).toHaveLength(100);
+    expect(groups[0].messages[0].message).toMatchObject({ content: "message 0" });
+  });
+
   it("does not collapse duplicate text messages separated by another message", () => {
     const groups = messageGroups({
       messages: [

@@ -20,6 +20,11 @@ export type BuildChatItemsProps = {
   showToolCalls: boolean;
   searchOpen?: boolean;
   searchQuery?: string;
+  // Server-side truncation signal. When true, older messages exist on the
+  // server but were not returned in the bounded chat.history response, so the
+  // renderer should surface a notice even when the local history did not
+  // exceed the client render window.
+  serverHistoryTruncated?: boolean;
 };
 
 function appendCanvasBlockToAssistantMessage(
@@ -273,13 +278,18 @@ export function buildChatItems(props: BuildChatItemsProps): Array<ChatItem | Mes
     timestamp: number | null;
   }>;
   const historyStart = Math.max(0, history.length - CHAT_HISTORY_RENDER_LIMIT);
-  if (historyStart > 0) {
+  const serverTruncated = props.serverHistoryTruncated === true && history.length > 0;
+  if (historyStart > 0 || serverTruncated) {
+    const noticeContent =
+      historyStart > 0
+        ? `Showing last ${CHAT_HISTORY_RENDER_LIMIT} messages (${historyStart} hidden).`
+        : `Showing last ${history.length} messages. Older messages exist; view this session in TUI for full history.`;
     items.push({
       kind: "message",
       key: "chat:history:notice",
       message: {
         role: "system",
-        content: `Showing last ${CHAT_HISTORY_RENDER_LIMIT} messages (${historyStart} hidden).`,
+        content: noticeContent,
         timestamp: Date.now(),
       },
     });
