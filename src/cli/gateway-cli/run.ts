@@ -786,19 +786,28 @@ async function runGatewayCommand(opts: GatewayRunOpts) {
   gatewayLog.info("starting...");
   startupTrace.mark("cli.gateway-loop");
   const healthHost = await resolveGatewayBindHost(bind, cfg.gateway?.customBindHost);
+  // Consume the pre-read startup snapshot exactly once. Subsequent in-process
+  // restart iterations must re-read `openclaw.json` from disk so user config
+  // writes between restarts are honored instead of clobbered by the stale
+  // snapshot. (#79947)
+  let pendingStartupSnapshot: typeof startupConfigSnapshotRead | undefined =
+    startupConfigSnapshotRead;
   const startLoop = async () =>
     await runGatewayLoop({
       runtime: defaultRuntime,
       lockPort: port,
       healthHost,
-      start: async ({ startupStartedAt } = {}) =>
-        await startGatewayServer(port, {
+      start: async ({ startupStartedAt } = {}) => {
+        const snapshotForThisStart = pendingStartupSnapshot;
+        pendingStartupSnapshot = undefined;
+        return await startGatewayServer(port, {
           bind,
           auth: authOverride,
           tailscale: tailscaleOverride,
           startupStartedAt,
-          ...(startupConfigSnapshotRead ? { startupConfigSnapshotRead } : {}),
-        }),
+          ...(snapshotForThisStart ? { startupConfigSnapshotRead: snapshotForThisStart } : {}),
+        });
+      },
     });
 
   const { detectRespawnSupervisor } = await import("../../infra/supervisor-markers.js");

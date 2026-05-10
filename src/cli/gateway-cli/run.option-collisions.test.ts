@@ -305,6 +305,27 @@ describe("gateway run option collisions", () => {
     );
   });
 
+  it("only passes the pre-read startup snapshot on the first start call (#79947)", async () => {
+    runGatewayLoop.mockImplementationOnce(async ({ start }: { start: () => Promise<unknown> }) => {
+      // Simulate an in-process SIGUSR1 restart by invoking `start` twice
+      // within the same gateway loop. The second iteration must re-read
+      // openclaw.json from disk rather than reusing the captured snapshot,
+      // otherwise user config writes between restarts get clobbered.
+      await start();
+      await start();
+    });
+
+    await runGatewayCli(["gateway", "run", "--allow-unconfigured"]);
+
+    expect(startGatewayServer).toHaveBeenCalledTimes(2);
+    const firstCallOpts = startGatewayServer.mock.calls[0]?.[1] as Record<string, unknown>;
+    const secondCallOpts = startGatewayServer.mock.calls[1]?.[1] as Record<string, unknown>;
+    expect(firstCallOpts).toEqual(
+      expect.objectContaining({ startupConfigSnapshotRead: { snapshot: configState.snapshot } }),
+    );
+    expect(secondCallOpts).not.toHaveProperty("startupConfigSnapshotRead");
+  });
+
   it("logs when first startup will build missing Control UI assets", async () => {
     controlUiState.root = null;
 
